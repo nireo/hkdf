@@ -307,4 +307,89 @@ static inline void hmac_sha256(const uint8_t *key, size_t key_len,
   sha256_final(&outer_ctx, digest);
 }
 
+static inline int hkdf_sha256(const uint8_t *salt, size_t salt_len,
+                              const uint8_t *ikm, size_t ikm_len,
+                              const uint8_t *info, size_t info_len,
+                              uint8_t *okm, size_t okm_len)
+{
+  const size_t hash_len = 32u;
+  uint8_t prk[32];
+  uint8_t zero_salt[32] = {0};
+  uint8_t k0[64];
+  uint8_t ipad[64], opad[64];
+  uint8_t t[32];
+  uint8_t inner_hash[32];
+  size_t pos = 0;
+  size_t t_len = 0;
+
+  if (okm_len > 255u * hash_len)
+  {
+    return -1;
+  }
+  if (okm == NULL && okm_len > 0u)
+  {
+    return -1;
+  }
+  if (ikm == NULL && ikm_len > 0u)
+  {
+    return -1;
+  }
+  if (info == NULL && info_len > 0u)
+  {
+    return -1;
+  }
+
+  if (salt == NULL || salt_len == 0u)
+  {
+    salt = zero_salt;
+    salt_len = sizeof(zero_salt);
+  }
+
+  hmac_sha256(salt, salt_len, ikm, ikm_len, prk);
+
+  memset(k0, 0, sizeof(k0));
+  memcpy(k0, prk, sizeof(prk));
+
+  for (size_t i = 0; i < 64u; ++i)
+  {
+    ipad[i] = k0[i] ^ 0x36u;
+    opad[i] = k0[i] ^ 0x5cu;
+  }
+
+  for (uint8_t counter = 1u; pos < okm_len; ++counter)
+  {
+    sha256_ctx inner_ctx;
+    sha256_ctx outer_ctx;
+    size_t take = okm_len - pos;
+
+    sha256_init(&inner_ctx);
+    sha256_update(&inner_ctx, ipad, 64u);
+    if (t_len > 0u)
+    {
+      sha256_update(&inner_ctx, t, t_len);
+    }
+    if (info != NULL && info_len > 0u)
+    {
+      sha256_update(&inner_ctx, info, info_len);
+    }
+    sha256_update(&inner_ctx, &counter, 1u);
+    sha256_final(&inner_ctx, inner_hash);
+
+    sha256_init(&outer_ctx);
+    sha256_update(&outer_ctx, opad, 64u);
+    sha256_update(&outer_ctx, inner_hash, sizeof(inner_hash));
+    sha256_final(&outer_ctx, t);
+
+    if (take > hash_len)
+    {
+      take = hash_len;
+    }
+    memcpy(okm + pos, t, take);
+    pos += take;
+    t_len = hash_len;
+  }
+
+  return 0;
+}
+
 #endif
